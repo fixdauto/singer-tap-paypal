@@ -41,11 +41,12 @@ def sync(
         # Update the current stream as active syncing in the state
         singer.set_currently_syncing(state, stream.tap_stream_id)
 
-        # Retrieve the state of the stream
+        # Retrieve the state of the stream, falling back to config
+        # start_date on first run when no bookmark exists yet
         stream_state: dict = tools.get_stream_state(
             state,
             stream.tap_stream_id,
-        )
+        ) or {'start_date': start_date}
 
         LOGGER.debug(f'Stream state: {stream_state}')
 
