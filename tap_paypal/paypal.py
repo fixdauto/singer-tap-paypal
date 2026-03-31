@@ -9,7 +9,7 @@ from typing import Generator, Optional
 import httpx
 import singer
 from dateutil.parser import isoparse
-from dateutil.rrule import WEEKLY, rrule
+from dateutil.rrule import DAILY, rrule
 
 from tap_paypal.cleaners import clean_paypal_transactions
 
@@ -95,22 +95,19 @@ class PayPal(object):  # noqa: WPS230
         # The difference between start_date and end_date can max be 31 days
         # Split up the requests into weekly batches
         batches: rrule = rrule(
-            WEEKLY,
+            DAILY,
             dtstart=start_date,
             until=end_date,
         )
 
         total_batches: int = len(list(batches))
-        self.logger.info(f'Total weekly batches: {total_batches}')
+        self.logger.info(f'Total daily batches: {total_batches}')
 
         current_batch: int = 0
 
-        # Batches contain all start_dates, the end_date is 6 days 23:59 later
-        # E.g. 2021-01-01T00:00:00+0000 <--> 2021-01-07T23:59:59+0000
         for start_date_batch in batches:
-            # Determine the end_date
             end_date_batch: datetime = (
-                start_date_batch + timedelta(days=7, seconds=-1)
+                start_date_batch + timedelta(days=1, seconds=-1)
             )
 
             # Prevent the end_date from going into the future
@@ -161,7 +158,11 @@ class PayPal(object):  # noqa: WPS230
                     params=http_params,
                 )
 
-                # Raise error on 4xx and 5xxx
+                if response.status_code >= 400:
+                    self.logger.error(
+                        f'PayPal API error {response.status_code}: '
+                        f'{response.text}',
+                    )
                 response.raise_for_status()
 
                 response_data: dict = response.json()
