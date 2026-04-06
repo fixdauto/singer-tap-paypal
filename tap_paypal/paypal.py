@@ -266,6 +266,21 @@ class PayPal(object):  # noqa: WPS230
                     params=params,
                 )
 
+                if response.status_code == 429:
+                    retry_after = int(
+                        response.headers.get('Retry-After', 30),
+                    )
+                    self.logger.warning(
+                        f'Rate limited (429) on attempt '
+                        f'{attempt}/{MAX_RETRIES}. '
+                        f'Waiting {retry_after}s...',
+                    )
+                    raise httpx.HTTPStatusError(
+                        f'Rate limited (429)',
+                        request=response.request,
+                        response=response,
+                    )
+
                 if response.status_code >= 500:
                     self.logger.warning(
                         f'PayPal API server error {response.status_code} '
@@ -289,7 +304,16 @@ class PayPal(object):  # noqa: WPS230
                     httpx.HTTPStatusError) as exc:
                 last_exception = exc
                 if attempt < MAX_RETRIES:
-                    wait_time = RETRY_BACKOFF_BASE ** attempt
+                    is_rate_limited = (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and exc.response.status_code == 429
+                    )
+                    if is_rate_limited:
+                        wait_time = int(
+                            exc.response.headers.get('Retry-After', 30),
+                        )
+                    else:
+                        wait_time = RETRY_BACKOFF_BASE ** attempt
                     self.logger.warning(
                         f'Request failed (attempt {attempt}/{MAX_RETRIES}): '
                         f'{exc}. Retrying in {wait_time}s...',
