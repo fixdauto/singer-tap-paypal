@@ -29,8 +29,10 @@ HEADERS: MappingProxyType = MappingProxyType({  # Frozen dictionary
 })
 
 HTTP_TIMEOUT: int = 30
-MAX_RETRIES: int = 5
+MAX_RETRIES: int = 8
 RETRY_BACKOFF_BASE: int = 2
+REQUEST_DELAY: float = 0.5
+RATE_LIMIT_BACKOFF: int = 60
 
 
 class PayPal(object):  # noqa: WPS230
@@ -159,6 +161,10 @@ class PayPal(object):  # noqa: WPS230
                 page += 1
                 http_params['page'] = page
 
+                # Throttle requests to avoid hitting PayPal rate limits
+                if page > 1:
+                    time.sleep(REQUEST_DELAY)
+
                 # Request data from the API with retry logic
                 response = self._request_with_retry(url, http_params)
 
@@ -268,7 +274,10 @@ class PayPal(object):  # noqa: WPS230
 
                 if response.status_code == 429:
                     retry_after = int(
-                        response.headers.get('Retry-After', 30),
+                        response.headers.get(
+                            'Retry-After',
+                            RATE_LIMIT_BACKOFF,
+                        ),
                     )
                     self.logger.warning(
                         f'Rate limited (429) on attempt '
@@ -310,7 +319,10 @@ class PayPal(object):  # noqa: WPS230
                     )
                     if is_rate_limited:
                         wait_time = int(
-                            exc.response.headers.get('Retry-After', 30),
+                            exc.response.headers.get(
+                                'Retry-After',
+                                RATE_LIMIT_BACKOFF,
+                            ),
                         )
                     else:
                         wait_time = RETRY_BACKOFF_BASE ** attempt
