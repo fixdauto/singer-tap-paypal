@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Generator, Optional
@@ -26,6 +27,10 @@ HEADERS: MappingProxyType = MappingProxyType({  # Frozen dictionary
     'Content-Type': 'application/json',
     'Authorization': 'Bearer :accesstoken:',
 })
+
+HTTP_TIMEOUT: int = 30
+MAX_RETRIES: int = 5
+RETRY_BACKOFF_BASE: int = 2
 
 
 class PayPal(object):  # noqa: WPS230
@@ -52,6 +57,10 @@ class PayPal(object):  # noqa: WPS230
 
         self.token: Optional[str] = None
         self.token_expires: Optional[datetime] = None
+        self.client: httpx.Client = httpx.Client(
+            http2=True,
+            timeout=HTTP_TIMEOUT,
+        )
 
         if sandbox:
             self.logger.info('Running in Sandbox environment')
@@ -150,20 +159,8 @@ class PayPal(object):  # noqa: WPS230
                 page += 1
                 http_params['page'] = page
 
-                # Request data from the API
-                client: httpx.Client = httpx.Client(http2=True)
-                response: httpx._models.Response = client.get(  # noqa: WPS437
-                    url,
-                    headers=self.headers,
-                    params=http_params,
-                )
-
-                if response.status_code >= 400:
-                    self.logger.error(
-                        f'PayPal API error {response.status_code}: '
-                        f'{response.text}',
-                    )
-                response.raise_for_status()
+                # Request data from the API with retry logic
+                response = self._request_with_retry(url, http_params)
 
                 response_data: dict = response.json()
 
@@ -213,8 +210,7 @@ class PayPal(object):  # noqa: WPS230
 
         now: datetime = datetime.utcnow()
 
-        client: httpx.Client = httpx.Client(http2=True)
-        response: httpx._models.Response = client.post(  # noqa: WPS437
+        response: httpx._models.Response = self.client.post(  # noqa: WPS437
             url,
             headers=headers,
             data=post_data,
@@ -242,6 +238,67 @@ class PayPal(object):  # noqa: WPS230
             'Authentication succesfull '
             f'(appid: {appid})',
         )
+
+    def _request_with_retry(  # noqa: WPS210
+        self,
+        url: str,
+        params: dict,
+    ) -> httpx._models.Response:  # noqa: WPS437
+        """Make a GET request with retry and exponential backoff.
+
+        Arguments:
+            url {str} -- Request URL
+            params {dict} -- Query parameters
+
+        Raises:
+            last_exception: Re-raises the last exception after all retries
+
+        Returns:
+            httpx._models.Response -- API response
+        """
+        last_exception = None
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self.client.get(
+                    url,
+                    headers=self.headers,
+                    params=params,
+                )
+
+                if response.status_code >= 500:
+                    self.logger.warning(
+                        f'PayPal API server error {response.status_code} '
+                        f'(attempt {attempt}/{MAX_RETRIES})',
+                    )
+                    raise httpx.HTTPStatusError(
+                        f'Server error {response.status_code}',
+                        request=response.request,
+                        response=response,
+                    )
+
+                if response.status_code >= 400:
+                    self.logger.error(
+                        f'PayPal API error {response.status_code}: '
+                        f'{response.text}',
+                    )
+                response.raise_for_status()
+                return response
+
+            except (httpx.ReadTimeout, httpx.ConnectTimeout,
+                    httpx.HTTPStatusError) as exc:
+                last_exception = exc
+                if attempt < MAX_RETRIES:
+                    wait_time = RETRY_BACKOFF_BASE ** attempt
+                    self.logger.warning(
+                        f'Request failed (attempt {attempt}/{MAX_RETRIES}): '
+                        f'{exc}. Retrying in {wait_time}s...',
+                    )
+                    time.sleep(wait_time)
+                else:
+                    self.logger.critical(str(exc))
+
+        raise last_exception
 
     def _create_headers(self) -> None:
         """Create authenticationn headers for requests."""
