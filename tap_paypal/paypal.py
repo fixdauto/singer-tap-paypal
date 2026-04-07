@@ -31,7 +31,8 @@ HEADERS: MappingProxyType = MappingProxyType({  # Frozen dictionary
 HTTP_TIMEOUT: int = 30
 MAX_RETRIES: int = 8
 RETRY_BACKOFF_BASE: int = 2
-REQUEST_DELAY: float = 0.5
+REQUEST_DELAY: float = 1.0
+BATCH_DELAY: float = 5.0
 RATE_LIMIT_BACKOFF: int = 60
 
 
@@ -130,6 +131,9 @@ class PayPal(object):  # noqa: WPS230
             end_date_str: str = self._date_to_paypal_format(end_date_batch)
 
             current_batch += 1
+
+            if current_batch > 1:
+                time.sleep(BATCH_DELAY)
 
             self.logger.info(
                 f'Parsing batch {current_batch}: {start_date_str} <--> '
