@@ -34,6 +34,8 @@ RETRY_BACKOFF_BASE: int = 2
 REQUEST_DELAY: float = 1.0
 BATCH_DELAY: float = 5.0
 RATE_LIMIT_BACKOFF: int = 60
+MAX_RESULTSET: int = 10000
+MIN_BATCH_HOURS: int = 1
 
 
 class PayPal(object):  # noqa: WPS230
@@ -140,71 +142,159 @@ class PayPal(object):  # noqa: WPS230
                 f'{end_date_str}',
             )
 
-            # Default initial parameters send with each request
-            fixed_params: dict = {
-                'fields': 'all',
-                'page_size': 100,
-                'page': 1,  # Is updated in further requests
-                'start_date': start_date_str,
-                'end_date': end_date_str,
-            }
-            # Kwargs can be used to add aditional parameters to each requests
-            http_params: dict = {**fixed_params, **kwargs}
-
-            # Start of pagination
-            page: int = 0
-            total_pages: int = 1
-            url: str = (
-                f'{API_SCHEME}{self.base}/'
-                f'{API_VERSION}/{API_PATH_TRANSACTIONS}'
+            yield from self._fetch_batch_pages(
+                start_date_batch,
+                end_date_batch,
+                current_batch,
+                total_batches,
+                kwargs,
             )
 
-            # Request more pages if there are available
-            while page < total_pages:
-                # Update current page
-                page += 1
-                http_params['page'] = page
-
-                # Throttle requests to avoid hitting PayPal rate limits
-                if page > 1:
-                    time.sleep(REQUEST_DELAY)
-
-                # Request data from the API with retry logic
-                response = self._request_with_retry(url, http_params)
-
-                response_data: dict = response.json()
-
-                # Retrieve the current page details
-                page = response_data.get('page', 1)
-                total_pages = response_data.get('total_pages', 0)
-
-                percentage_page: float = round((page / total_pages) * 100, 2)
-                percentage_batch: float = round(
-                    (current_batch / total_batches) * 100, 2,
-                )
-
-                self.logger.info(
-                    f'Batch: {current_batch} of '  # noqa: WPS221
-                    f'{total_batches} '
-                    f'({percentage_batch}%), '
-                    f'page: {page} of '
-                    f'{total_pages} '
-                    f'({percentage_page}%)',
-                )
-
-                # Yield every transaction in the response
-                transactions: list = response_data.get(
-                    'transaction_details',
-                    [],
-                )
-                yield from (
-                    clean_paypal_transactions(transaction)
-                    for transaction in transactions
-                )
-                # for transaction in transactions:
-                #     yield clean_paypal_transactions(transaction)
-
         self.logger.info('Finished: paypal_transactions')
+
+    def _fetch_batch_pages(  # noqa: WPS210, WPS213, WPS231
+        self,
+        batch_start: datetime,
+        batch_end: datetime,
+        current_batch: int,
+        total_batches: int,
+        extra_params: dict,
+    ) -> Generator[dict, None, None]:
+        """Fetch all pages for a time window, splitting if too large.
+
+        Arguments:
+            batch_start {datetime} -- Start of batch window
+            batch_end {datetime} -- End of batch window
+            current_batch {int} -- Current batch number for logging
+            total_batches {int} -- Total batches for logging
+            extra_params {dict} -- Additional query parameters
+
+        Yields:
+            Generator[dict] -- Yields cleaned transactions
+        """
+        start_str = self._date_to_paypal_format(batch_start)
+        end_str = self._date_to_paypal_format(batch_end)
+
+        fixed_params: dict = {
+            'fields': 'all',
+            'page_size': 100,
+            'page': 1,
+            'start_date': start_str,
+            'end_date': end_str,
+        }
+        http_params: dict = {**fixed_params, **extra_params}
+
+        page: int = 0
+        total_pages: int = 1
+        url: str = (
+            f'{API_SCHEME}{self.base}/'
+            f'{API_VERSION}/{API_PATH_TRANSACTIONS}'
+        )
+
+        while page < total_pages:
+            page += 1
+            http_params['page'] = page
+
+            if page > 1:
+                time.sleep(REQUEST_DELAY)
+
+            response = self._request_with_retry(url, http_params)
+            response_data: dict = response.json()
+
+            if self._is_resultset_too_large(response_data):
+                yield from self._split_and_fetch(
+                    batch_start,
+                    batch_end,
+                    current_batch,
+                    total_batches,
+                    extra_params,
+                )
+                return
+
+            page = response_data.get('page', 1)
+            total_pages = response_data.get('total_pages', 0)
+
+            percentage_page: float = round((page / total_pages) * 100, 2)
+            percentage_batch: float = round(
+                (current_batch / total_batches) * 100, 2,
+            )
+
+            self.logger.info(
+                f'Batch: {current_batch} of '  # noqa: WPS221
+                f'{total_batches} '
+                f'({percentage_batch}%), '
+                f'page: {page} of '
+                f'{total_pages} '
+                f'({percentage_page}%)',
+            )
+
+            transactions: list = response_data.get(
+                'transaction_details',
+                [],
+            )
+            yield from (
+                clean_paypal_transactions(transaction)
+                for transaction in transactions
+            )
+
+    def _is_resultset_too_large(self, response_data: dict) -> bool:
+        """Check if a response indicates the result set is too large."""
+        return response_data.get('name') == 'RESULTSET_TOO_LARGE'
+
+    def _split_and_fetch(  # noqa: WPS210
+        self,
+        batch_start: datetime,
+        batch_end: datetime,
+        current_batch: int,
+        total_batches: int,
+        extra_params: dict,
+    ) -> Generator[dict, None, None]:
+        """Split a time window in half and fetch each sub-batch.
+
+        Arguments:
+            batch_start {datetime} -- Start of the window
+            batch_end {datetime} -- End of the window
+            current_batch {int} -- Current batch number for logging
+            total_batches {int} -- Total batches for logging
+            extra_params {dict} -- Additional query parameters
+
+        Yields:
+            Generator[dict] -- Yields cleaned transactions
+        """
+        duration = batch_end - batch_start
+        hours = duration.total_seconds() / 3600
+
+        if hours < MIN_BATCH_HOURS:
+            self.logger.error(
+                f'Cannot split further: window is {hours:.1f}h '
+                f'({batch_start} to {batch_end}). Skipping.',
+            )
+            return
+
+        midpoint = batch_start + (duration / 2)
+
+        self.logger.info(
+            f'RESULTSET_TOO_LARGE: splitting {hours:.0f}h window into '
+            f'two {hours / 2:.0f}h sub-batches',
+        )
+
+        time.sleep(BATCH_DELAY)
+        yield from self._fetch_batch_pages(
+            batch_start,
+            midpoint,
+            current_batch,
+            total_batches,
+            extra_params,
+        )
+
+        time.sleep(BATCH_DELAY)
+        yield from self._fetch_batch_pages(
+            midpoint + timedelta(seconds=1),
+            batch_end,
+            current_batch,
+            total_batches,
+            extra_params,
+        )
 
     def _authenticate(self) -> None:  # noqa: WPS210
         """Generate a bearer access token."""
@@ -275,6 +365,11 @@ class PayPal(object):  # noqa: WPS230
                     headers=self.headers,
                     params=params,
                 )
+
+                if response.status_code == 400:
+                    response_body = response.json()
+                    if response_body.get('name') == 'RESULTSET_TOO_LARGE':
+                        return response
 
                 if response.status_code == 429:
                     retry_after = int(
