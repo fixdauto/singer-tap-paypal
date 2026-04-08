@@ -287,6 +287,144 @@
               ]
             }
           }
+        },
+        "discount_amount": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "tip_amount": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "shipping_tax_amount": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "other_amount": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "credit_transactional_fee": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "credit_promotional_fee": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "currency_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "value": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          }
+        },
+        "annual_percentage_rate": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "payment_method_type": {
+          "type": [
+            "null",
+            "string"
+          ]
         }
       },
       "transaction_status": {
@@ -427,7 +565,25 @@
                 "string"
               ]
             },
+            "prefix": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "suffix": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
             "alternate_full_name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "full_name": {
               "type": [
                 "null",
                 "string"
@@ -449,6 +605,12 @@
               ]
             },
             "national_number": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "extension_number": {
               "type": [
                 "null",
                 "string"
@@ -483,6 +645,56 @@
             "object"
           ],
           "additionalProperties": false,
+          "properties": {
+            "line1": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "line2": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "city": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "country_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "postal_code": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "state": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        },
+        "method": {
+          "type": [
+            "null",
+            "string"
+          ]
+        },
+        "secondary_shipping_address": {
+          "type": [
+            "null",
+            "object"
+          ],
           "properties": {
             "line1": {
               "type": [

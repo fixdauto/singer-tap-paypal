@@ -1,8 +1,64 @@
 """Cleaner functions."""
 # -*- coding: utf-8 -*-
+import json
+import logging
+import os
 from decimal import Decimal
 
 from dateutil.parser import parse as parse_d
+
+logger = logging.getLogger(__name__)
+
+
+def _load_schema() -> dict:
+    """Load the paypal_transactions schema once."""
+    schema_path = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)),
+        'schemas',
+        'paypal_transactions.json',
+    )
+    with open(schema_path) as schema_file:
+        return json.load(schema_file)
+
+
+_SCHEMA = _load_schema()
+
+
+def _strip_extra_fields(data, schema):  # noqa: WPS210
+    """Recursively strip fields not declared in the schema.
+
+    Arguments:
+        data -- The data to clean (dict, list, or scalar)
+        schema {dict} -- The JSON schema definition
+
+    Returns:
+        The cleaned data with undeclared fields removed
+    """
+    schema_type = schema.get('type', '')
+    if isinstance(schema_type, list):
+        schema_types = schema_type
+    else:
+        schema_types = [schema_type]
+
+    if isinstance(data, dict) and 'object' in schema_types:
+        properties = schema.get('properties', {})
+        allowed_keys = set(properties.keys())
+        extra_keys = set(data.keys()) - allowed_keys
+        for key in extra_keys:
+            logger.warning(
+                f'Stripping undeclared field: {key}',
+            )
+            del data[key]
+        for key, sub_schema in properties.items():
+            if key in data and data[key] is not None:
+                _strip_extra_fields(data[key], sub_schema)
+
+    if isinstance(data, list) and 'array' in schema_types:
+        items_schema = schema.get('items', {})
+        for item in data:
+            _strip_extra_fields(item, items_schema)
+
+    return data
 
 
 def clean_paypal_transactions(row: dict) -> dict:  # noqa: WPS 210,WPS231
@@ -77,6 +133,48 @@ def clean_paypal_transactions(row: dict) -> dict:  # noqa: WPS 210,WPS231
         if t_info.get('shipping_discount_amount', {}).get('value'):
             t_info['shipping_discount_amount']['value'] = Decimal(
                 t_info['shipping_discount_amount']['value'],
+            )
+
+        # transaction_info.discount_amount.value
+        if t_info.get('discount_amount', {}).get('value'):
+            t_info['discount_amount']['value'] = Decimal(
+                t_info['discount_amount']['value'],
+            )
+
+        # transaction_info.tip_amount.value
+        if t_info.get('tip_amount', {}).get('value'):
+            t_info['tip_amount']['value'] = Decimal(
+                t_info['tip_amount']['value'],
+            )
+
+        # transaction_info.shipping_tax_amount.value
+        if t_info.get('shipping_tax_amount', {}).get('value'):
+            t_info['shipping_tax_amount']['value'] = Decimal(
+                t_info['shipping_tax_amount']['value'],
+            )
+
+        # transaction_info.other_amount.value
+        if t_info.get('other_amount', {}).get('value'):
+            t_info['other_amount']['value'] = Decimal(
+                t_info['other_amount']['value'],
+            )
+
+        # transaction_info.credit_transactional_fee.value
+        if t_info.get('credit_transactional_fee', {}).get('value'):
+            t_info['credit_transactional_fee']['value'] = Decimal(
+                t_info['credit_transactional_fee']['value'],
+            )
+
+        # transaction_info.credit_promotional_fee.value
+        if t_info.get('credit_promotional_fee', {}).get('value'):
+            t_info['credit_promotional_fee']['value'] = Decimal(
+                t_info['credit_promotional_fee']['value'],
+            )
+
+        # transaction_info.annual_percentage_rate
+        if t_info.get('annual_percentage_rate'):
+            t_info['annual_percentage_rate'] = Decimal(
+                t_info['annual_percentage_rate'],
             )
 
         # transaction_info.transaction_initiation_date
@@ -154,4 +252,7 @@ def clean_paypal_transactions(row: dict) -> dict:  # noqa: WPS 210,WPS231
     # unknown which fields are available from the API.
     row.pop('store_info', None)
     row.pop('auction_info', None)
+
+    _strip_extra_fields(row, _SCHEMA)
+
     return row
