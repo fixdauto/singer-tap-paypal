@@ -271,7 +271,7 @@ class PayPal(object):  # noqa: WPS230
             )
             return
 
-        midpoint = batch_start + (duration / 2)
+        midpoint = (batch_start + (duration / 2)).replace(microsecond=0)
 
         self.logger.info(
             f'RESULTSET_TOO_LARGE: splitting {hours:.0f}h window into '
@@ -453,4 +453,5 @@ class PayPal(object):  # noqa: WPS230
         Returns:
             str -- Converted datetime: 2021-01-01T00:00:00+0000
         """
-        return ''.join(input_datetime.isoformat().rsplit(':', 1))
+        clean_dt = input_datetime.replace(microsecond=0)
+        return ''.join(clean_dt.isoformat().rsplit(':', 1))
