@@ -36,6 +36,7 @@ BATCH_DELAY: float = 5.0
 RATE_LIMIT_BACKOFF: int = 60
 MAX_RESULTSET: int = 10000
 MIN_BATCH_HOURS: int = 1
+DATA_LAG_HOURS: int = 24
 
 
 class PayPal(object):  # noqa: WPS230
@@ -97,7 +98,16 @@ class PayPal(object):  # noqa: WPS230
 
         # Set start date and end date
         start_date: datetime = isoparse(start_date_input)
-        end_date: datetime = datetime.now(timezone.utc).replace(microsecond=0)
+        now: datetime = datetime.now(timezone.utc).replace(microsecond=0)
+
+        # Clamp end_date to avoid requesting very recent partial-day data
+        # from PayPal which can return INVALID_REQUEST for same-day windows.
+        end_date: datetime = now - timedelta(hours=DATA_LAG_HOURS)
+        # If the clamped end_date is before the requested start_date, fall
+        # back to the current time so the rrule still generates the expected
+        # batches.
+        if end_date < start_date:
+            end_date = now
 
         self.logger.info(
             f'Retrieving transactions from {start_date} to {end_date}',
@@ -201,6 +211,16 @@ class PayPal(object):  # noqa: WPS230
             response = self._request_with_retry(url, http_params)
             response_data: dict = response.json()
 
+            # If PayPal reports that the start_date window has no data yet
+            # (404 INVALID_REQUEST), stop the sync gracefully — later runs
+            # can resume once data becomes available.
+            if self._is_invalid_start_date(response_data):
+                self.logger.warning(
+                    'Data not available for requested batch '
+                    f'{start_str} <--> {end_str}; stopping sync for now.',
+                )
+                return
+
             if self._is_resultset_too_large(response_data):
                 yield from self._split_and_fetch(
                     batch_start,
@@ -240,6 +260,16 @@ class PayPal(object):  # noqa: WPS230
     def _is_resultset_too_large(self, response_data: dict) -> bool:
         """Check if a response indicates the result set is too large."""
         return response_data.get('name') == 'RESULTSET_TOO_LARGE'
+
+    def _is_invalid_start_date(self, response_data: dict) -> bool:
+        """Check if a response indicates the requested start_date has no data.
+
+        PayPal returns a 404 with name 'INVALID_REQUEST' and a message like
+        'Data for the given start date is not available.' in this case.
+        """
+        name = response_data.get('name')
+        msg = response_data.get('message', '') or ''
+        return name == 'INVALID_REQUEST' and 'start date' in msg.lower()
 
     def _split_and_fetch(  # noqa: WPS210
         self,
@@ -369,6 +399,17 @@ class PayPal(object):  # noqa: WPS230
                 if response.status_code == 400:
                     response_body = response.json()
                     if response_body.get('name') == 'RESULTSET_TOO_LARGE':
+                        return response
+
+                if response.status_code == 404:
+                    # PayPal uses 404 INVALID_REQUEST when a start_date has
+                    # no data yet. Treat as non-retriable and return the
+                    # response so the caller can decide how to handle it.
+                    try:
+                        response_body = response.json()
+                    except Exception:
+                        response_body = {}
+                    if response_body.get('name') == 'INVALID_REQUEST':
                         return response
 
                 if response.status_code == 429:
