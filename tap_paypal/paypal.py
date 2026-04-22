@@ -234,6 +234,13 @@ class PayPal(object):  # noqa: WPS230
             page = response_data.get('page', 1)
             total_pages = response_data.get('total_pages', 0)
 
+            if total_pages == 0:
+                self.logger.info(
+                    f'Batch: {current_batch} of {total_batches}, '
+                    'no transactions in batch',
+                )
+                return
+
             percentage_page: float = round((page / total_pages) * 100, 2)
             percentage_batch: float = round(
                 (current_batch / total_batches) * 100, 2,
